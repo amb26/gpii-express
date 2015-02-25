@@ -4,8 +4,10 @@ var fluid        = fluid || require('infusion');
 var gpii         = fluid.registerNamespace("gpii");
 fluid.registerNamespace("gpii.express.tests.expressTestCaseHolder");
 
+fluid.setLogging(true);
+
 var path         = require("path");
-var jqUnit       = fluid.require("jqUnit");
+var jqUnit       = require("jqUnit");
 var request      = require("request");
 
 // Load all of "our" grades, including the test harnesses that are used to exercise "abstract" grades.
@@ -28,22 +30,20 @@ require("../node_modules/kettle/lib/test/KettleTestUtils");
 var viewDir    = path.resolve(__dirname, "./views");
 var contentDir = path.resolve(__dirname, "./html");
 
-gpii.express.tests.expressTestCaseHolder.isSaneResponse = function(jqUnit, error, response, body) {
-    jqUnit.assertNull("There should be no errors.", error);
+gpii.express.tests.expressTestCaseHolder.isSaneResponse = function (response, body) {
 
     jqUnit.assertEquals("The response should have a reasonable status code", 200, response.statusCode);
     if (response.statusCode !== 200) {
         console.log(JSON.stringify(body, null, 2));
     }
 
-    jqUnit.assertNotNull("There should be a body.", body);
+    jqUnit.assertValue("There should be a body.", body);
 };
 
 
-gpii.express.tests.expressTestCaseHolder.verifyStaticRouterModule = function(that, error, response, body) {
-    jqUnit.start();
+gpii.express.tests.expressTestCaseHolder.verifyStaticRouterModule = function (response, body) {
 
-    that.isSaneResponse(error, response, body);
+    gpii.express.tests.expressTestCaseHolder.isSaneResponse(response, body);
 
     var indexRegexp = /body of the index/;
     jqUnit.assertNotNull("The body should match the index content...", body.match(indexRegexp));
@@ -250,8 +250,8 @@ fluid.defaults("gpii.express.tests.expressTestCaseHolder", {
         "staticRequest": {
             "type": "kettle.test.request.http",
             "options": {
-                path: "{gpii.express}.options.config.express.baseUrl",
-                port: "{gpii.express}.options.config.express.port",
+                path: "{testEnvironment}.options.baseUrl",
+                port: "{testEnvironment}.options.port",
                 method: "GET"
             }
         }
@@ -261,14 +261,19 @@ fluid.defaults("gpii.express.tests.expressTestCaseHolder", {
                 {
                     "name":     "Testing the 'static' router module (index content)...",
                     "type":     "test",
-                    "sequence": [
+                    "sequence": [ { // This sequence point is required because of a QUnit bug - it defers the start of sequence by 13ms "to avoid any current callbacks" in its words
+                        func: "{testEnvironment}.events.constructServer.fire"
+                    }, {
+                       "listener" : "fluid.identity",
+                       "event": "{testEnvironment}.events.started"
+                    }, 
                         {
-                            "listener": "{staticRequest}.send",
-                            "event":    "{expressTestCaseHolder}.events.onCreate"
+                            "func": "{staticRequest}.send"
                         },
                         {
-                            "listener": "{expressTestCaseHolder}.verifyStaticRouterModule",
-                            "event":    "{staticRequest}.events.onComplete"
+                            "listener": "gpii.express.tests.expressTestCaseHolder.verifyStaticRouterModule",
+                            "event":    "{staticRequest}.events.onComplete",
+                            args: ["{staticRequest}.nativeResponse", "{arguments}.0"]
                         }
                     ]
                 }
@@ -277,29 +282,29 @@ fluid.defaults("gpii.express.tests.expressTestCaseHolder", {
     ],
     "listeners": {
         "onCreate": "{staticRequest}.send"
-    },
-    "invokers": {
-        "isSaneResponse": {
-            "funcName": "{expressTestCaseHolder}.isSaneResponse",
-            "args": ["{that}", "{arguments}.0", "{arguments}.1", "{arguments}.2"]
-        },
-        "verifyStaticRouterModule": {
-            "funcName": "{expressTestCaseHolder}.verifyStaticRouterModule",
-            "args": ["{that}", "{arguments}.0", "{arguments}.1", "{arguments}.2"]
-        }
     }
 });
 
 fluid.defaults("gpii.express.tests.expressTestTree", {
     "gradeNames": ["fluid.test.testEnvironment", "autoInit"],
+    "port" :   7531,
+    "baseUrl": "http://localhost/",
+    events: {
+        constructServer: null,
+        started: null
+    },
     "components": {
         "express": {       // instance of component under test
+            createOnEvent: "constructServer", 
             "type": "gpii.express",
             "options": {
+                events: {
+                    started: "{testEnvironment}.events.started"
+                },
                 "config": {
                     "express": {
-                        "port" :   7531,
-                        "baseUrl": "http://localhost:7531/",
+                        port: "{testEnvironment}.options.port",
+                        baseUrl: "{testEnvironment}.options.baseUrl",
                         "views":   viewDir,
                         "session": {
                             "secret": "Printer, printer take a hint-ter."
